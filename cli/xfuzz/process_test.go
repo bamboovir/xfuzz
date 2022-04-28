@@ -1,6 +1,7 @@
 package xfuzz
 
 import (
+	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
@@ -35,7 +36,7 @@ var (
 	CorpusFlag             = flag.String("corpus", "", "corpus dir path")
 	TmpFlag                = flag.String("tmp", "", "tmp storage dir path")
 	SignalFlag             = flag.String("signal", ".*panic.*", "regex exception predicate")
-	DeadlineFlag           = flag.Int("deadline", 1, "maximum amount of time a command can run (second)")
+	DeadlineFlag           = flag.Int("deadline", 1, "maximum amount of time a command could exec (second)")
 	ExceptionPredicateDict = []string{
 		".*panic.*",
 		".*core dump.*",
@@ -44,6 +45,7 @@ var (
 		".*invalid memory.*",
 		".*nil pointer dereference.*",
 		".*signal SIGSEGV.*",
+		".*fatal.*",
 	}
 )
 
@@ -163,12 +165,18 @@ func FuzzProcess(f *testing.F) {
 			t.Errorf("parse command failed with [%s]\n", err)
 			return
 		}
-		stdoutBuf := bytes.NewBuffer(make([]byte, 0))
-		stderrBuf := bytes.NewBuffer(make([]byte, 0))
 		cmd := exec.Command(name, args...)
 		cmd.Stdin = bytes.NewReader(data)
-		cmd.Stdout = stdoutBuf
-		cmd.Stderr = stderrBuf
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			t.Errorf("cmd [%s] failed with [%s]\n", cmd.String(), err)
+			return
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			t.Errorf("cmd [%s] failed with [%s]\n", cmd.String(), err)
+			return
+		}
 		deadline := time.Second * time.Duration(*DeadlineFlag)
 		err = cmd.Start()
 		t.Logf("cmd [%s] start", cmd.String())
@@ -177,6 +185,47 @@ func FuzzProcess(f *testing.F) {
 			return
 		}
 
+		outScan := bufio.NewScanner(stdout)
+		errScan := bufio.NewScanner(stderr)
+		outChan := make(chan error)
+		errChan := make(chan error)
+
+		go func() {
+			for outScan.Scan() {
+				line := outScan.Text()
+				for _, pattern := range ExceptionPredicateDict {
+					matchOut, err := regexp.MatchString(pattern, line)
+					if err != nil {
+						outChan <- fmt.Errorf("stdout: [%s] with [%s]", line, err)
+						return
+					}
+					if matchOut {
+						outChan <- fmt.Errorf("stdout: [%s]", line)
+						return
+					}
+				}
+			}
+			outChan <- nil
+		}()
+
+		go func() {
+			for errScan.Scan() {
+				line := errScan.Text()
+				for _, pattern := range ExceptionPredicateDict {
+					matchErr, err := regexp.MatchString(pattern, line)
+					if err != nil {
+						errChan <- fmt.Errorf("stderr: [%s] with [%s]", line, err)
+						return
+					}
+					if matchErr {
+						errChan <- fmt.Errorf("stderr: [%s]", line)
+						return
+					}
+				}
+			}
+			errChan <- nil
+		}()
+
 		done := make(chan struct{})
 		go func() {
 			cmd.Wait()
@@ -184,8 +233,7 @@ func FuzzProcess(f *testing.F) {
 			t.Logf("process terminated")
 		}()
 
-		select {
-		case <-time.After(deadline):
+		terminate := func() {
 			cmd.Process.Signal(syscall.SIGINT)
 			select {
 			case <-time.After(time.Second):
@@ -205,27 +253,23 @@ func FuzzProcess(f *testing.F) {
 				}
 			case <-done:
 			}
+		}
+
+		select {
+		case <-time.After(deadline):
+			terminate()
+		case err := <-outChan:
+			if err != nil {
+				terminate()
+				t.Errorf("stdout: %s", err)
+			}
+		case err := <-errChan:
+			if err != nil {
+				terminate()
+				t.Errorf("stderr: %s", err)
+			}
 		case <-done:
 		}
-
-		stdoutText := stdoutBuf.String()
-		stderrText := stderrBuf.String()
-
-		for _, pattern := range ExceptionPredicateDict {
-			matchOut, err := regexp.MatchString(pattern, stdoutText)
-			if err != nil {
-				t.Errorf("stdout: [%s]; stderr: [%s] with [%s]", stderrText, stdoutText, err)
-				return
-			}
-			matchErr, err := regexp.MatchString(pattern, stderrText)
-			if err != nil {
-				t.Errorf("stdout: [%s]; stderr: [%s] with [%s]", stderrText, stdoutText, err)
-				return
-			}
-			if matchOut || matchErr {
-				t.Errorf("stdout: [%s]; stderr: [%s]", stderrText, stdoutText)
-				return
-			}
-		}
+		return
 	})
 }

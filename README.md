@@ -1,4 +1,7 @@
-# Fuzz
+# XFuzz
+
+XFuzz is a lightweight utility CLI tool for fuzzing arbitrary programs.
+It provides a simple and practical user interface to help developers perform fuzz testing of programs to find bugs from God.
 
 ## Install
 
@@ -20,7 +23,7 @@ make
 ## Usage
 
 ```bash
-Usage of ./bin/xfuzz:
+Usage of xfuzz:
   -cmd string
         command
   -cmd-template
@@ -109,12 +112,14 @@ xfuzz -test.fuzz=FuzzProcess -test.v -test.fuzztime 30s -test.fuzzcachedir ./cac
 xfuzz -test.fuzz=FuzzProcess -test.v -test.fuzztime 30s -test.fuzzcachedir ./cache -cmd "ls -al"
 # Use xfuzz to test some commands with errors with predefined corpus within 30 seconds
 xfuzz -test.fuzz=FuzzProcess -test.v -test.fuzztime 30s -test.fuzzcachedir ./cache -corpus "./case/panic/corpus" -cmd "./bin/panic"
-xfuzz -test.fuzz=FuzzProcess -test.v -test.fuzztime 30s -test.fuzzcachedir ./cache -corpus "./case/panic/corpus" -cmd "./bin/segmentation_fault"
+xfuzz -test.fuzz=FuzzProcess -test.v -test.fuzztime 30s -test.fuzzcachedir ./cache -corpus "./case/segmentation_fault/corpus" -cmd "./bin/segmentation_fault"
 # Use xfuzz to test some commands that read configuration from the filesystem
 xfuzz -test.fuzz=FuzzProcess -test.v -test.fuzztime 30s -test.fuzzcachedir ./cache -cmd-template -tmp ./tmp -cmd "cat {{.File}}"
 # Use xfuzz to test some commands that may run for a long time
 xfuzz -test.fuzz=FuzzProcess -test.v -test.fuzztime 30s -test.fuzzcachedir ./cache -deadline 1 -cmd "sleep 10"
-# Reproduce bugs with toxic configs already found by xfuzz
+# Use custom regex exception predicate
+xfuzz -test.fuzz=FuzzProcess -test.v -test.fuzztime 30s -test.fuzzcachedir ./cache -signal ".*bbb.*" -corpus "./case/panic/corpus" -cmd-template -tmp ./tmp -cmd "cat {{.File}}"
+# Reproduce/Replay bugs with toxic configs already found by xfuzz
 xfuzz -test.fuzz=FuzzProcess -test.v -test.fuzztime 30s -test.fuzzcachedir ./cache -cmd "./bin/segmentation_fault" -test.run=FuzzProcess/54e5e70cc98e9c3f19f3e43f660f167332c6aaf07fa02eda098cc6b211e37b79
 ```
 
